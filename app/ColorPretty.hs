@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 module ColorPretty where
 
 import Types
@@ -64,5 +65,30 @@ ppEState (Eval env e) = ppSurround '{' $ do
 ppEState (Value v) = ppSurround '<' (ppValue v)
 
 
-pp :: EState -> String
-pp e = evalState (ppEState e) []
+class Pretty a where
+  pp :: a -> String
+
+instance Pretty EState where
+  -- pp :: EState -> String
+  pp e = evalState (ppEState e) []
+
+instance Pretty Expr where
+  -- pp :: Expr -> String
+  pp e = evalState (ppExpr e) []
+
+instance Pretty Env where
+  -- pp :: Expr -> String
+  pp e = evalState (ppEnv e) []
+
+instance Pretty Value where
+  -- pp :: Expr -> String
+  pp e = evalState (ppValue e) []
+
+instance Pretty (Value, Env) where
+  -- pp :: Expr -> String
+  pp (val, env) =
+    showString (pp env) $ showString " |- " (pp val)
+
+instance Pretty a => Pretty (Maybe a) where
+  pp (Just x) = pp x
+  pp Nothing  = "Nothing"

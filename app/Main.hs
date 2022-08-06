@@ -50,7 +50,7 @@ lookupEnv = lookupRest
 addExpr :: Expr -> Expr -> Expr
 addExpr (Lit n1) (Lit n2) = Lit (n1 + n2)
 addExpr t1 t2 = error $
-  "Addition error, trying to add " ++ show t1 ++ " to " ++ show t2
+  "Addition error, trying to add " ++ pp t1 ++ " to " ++ pp t2
 
 -- TODO: Evaluate to a value which is either
 -- a literal, or
@@ -58,7 +58,7 @@ addExpr t1 t2 = error $
 
 evalLit (Init   (Lit n)) = Value $ ValLit n
 evalLit (Eval e (Lit n)) = Value $ ValLit n
-evalLit x = error $ show x
+evalLit x = error $ pp x
 
 evalVar :: EState -> EState
 evalVar (Eval env (Var x)) = {- Value val -- Eval localEnv (Init val)
@@ -206,18 +206,19 @@ testK = "((/x.(/y.x)) 1)"
 
 main = do
   putStrLn "Hello!"
-  let s = zipWith (curry show) [1..] test
-  putStrLn $ unlines s
+  -- let s = zipWith (curry pp) [1..] test
+  -- putStrLn $ unlines s
 
+-- equals :: String -> Expr -> Expr -> Bool
 equals _ e1 e2 | e1 == e2 = True
 equals s e1 e2 =
-  error $ "\nExpecting:\n" ++ show e2 ++ "\nbut got:\n" ++ show e1 ++ " when testing " ++ s
+  error $ "\nExpecting:\n" ++ pp e2 ++ "\nbut got:\n" ++ pp e1 ++ " when testing " ++ s
 
 shouldThrow :: EState -> String -> Bool
-shouldThrow e = equals "shouldThrow" e2
+shouldThrow e expected = got == expected
   where
-    e2 :: String
-    e2 = unsafePerformIO $ do
+    got :: String
+    got = unsafePerformIO $ do
           eith <- Exception.try (Exception.evaluate e)
           case eith of
             Left  (Exception.ErrorCall msg) -> return msg

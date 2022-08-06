@@ -39,6 +39,7 @@ surround c s = showChar c $ showString s [close c]
     close '<' = '>'
     close c   = c
 
+{-
 instance Show Value where
   show (ValLit n) = show n
   show (ValClosure env x body) = surround '(' $
@@ -58,4 +59,4 @@ instance Show Expr where
   show (Lam c expr) = surround '(' $ "/" ++ showChar c "" ++ "." ++ show expr
   show (App f x)    = surround '(' $ show f ++ " " ++ show x
 
-
+-}
