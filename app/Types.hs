@@ -5,14 +5,22 @@ import GHC.Natural
 type Env = [(Char, Value)]
 
 data Value =
-      ValLit Natural
-    | ValClosure Char Expr
+      ValLit     Natural
+    | ValClosure
+      Env {-
+        Needed because otherwise we'd have:
+          {[] |- {[('x',1)] |- /(y.x)} 2}
+            ==
+          {[] |- */y.x* 2} -- results in undefined variable x.
+            The environment would then be lost.
+      -}
+      Char Expr
       deriving (Eq)
 
 data EState
   = Init  Expr
   | Eval  Env Expr
-  | Value Env Value
+  | Value Value
     deriving (Eq)
 
 data Expr
@@ -24,26 +32,30 @@ data Expr
     deriving (Eq)
 
 surround :: Char -> String -> String
-surround c s = c : s ++ [close c]
+surround c s = showChar c $ showString s [close c]
   where
     close '(' = ')'
     close '{' = '}'
+    close '<' = '>'
     close c   = c
 
 instance Show Value where
   show (ValLit n) = show n
-  show (ValClosure x body) = "/" ++ [x] ++ "." ++ show body
+  show (ValClosure env x body) = surround '(' $
+    show env ++ " |- " ++ surround '(' ("/" ++ [x] ++ "." ++ show body)
 
 instance Show EState where
   show (Init e)    = show e
-  show (Eval _ e)  = surround '{' (show e) -- TODO: we could show the environment too!
-  show (Value env v) = surround '*' (show env ++ " |- " ++ show v)
+  -- putStrLn $ "\x1b[32m" ++ "highlight me" ++ "\x1b[0m" ++ " but not me"
+  show (Eval env e) =
+      surround '{' (show env ++ " |- " ++ show e) -- TODO: we could show the environment too!
+  show (Value v) = surround '<' (show v)
 
 instance Show Expr where
   show (Var c)      = [c]
   show (Lit n)      = show n
   -- show (Add e1 e2)  = show e1 ++ " + " ++ show e2
-  show (Lam c expr) = "/(" ++ showChar c "" ++ "." ++ show expr ++ ")"
-  show (App f x)    = show f ++ " " ++ show x
+  show (Lam c expr) = surround '(' $ "/" ++ showChar c "" ++ "." ++ show expr
+  show (App f x)    = surround '(' $ show f ++ " " ++ show x
 
 

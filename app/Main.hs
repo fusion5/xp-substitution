@@ -9,9 +9,12 @@ import Debug.Trace
 import Data.Maybe
 import qualified Control.Exception as Exception
 import System.IO.Unsafe
+import Data.List
+import Control.Exception
 
 import Parser
 import Types
+import ColorPretty
 
 testEnv =
     pushEnv 'a' (ValLit 1)
@@ -53,8 +56,8 @@ addExpr t1 t2 = error $
 -- a literal, or
 -- a closure?
 
-evalLit (Init   (Lit n)) = Value [] $ ValLit n
-evalLit (Eval e (Lit n)) = Value e  $ ValLit n
+evalLit (Init   (Lit n)) = Value $ ValLit n
+evalLit (Eval e (Lit n)) = Value $ ValLit n
 evalLit x = error $ show x
 
 evalVar :: EState -> EState
@@ -62,29 +65,55 @@ evalVar (Eval env (Var x)) = {- Value val -- Eval localEnv (Init val)
   where Just (val, localEnv) = lookupEnv x env -}
   case lookupEnv x env of
     Nothing -> error $ "Undeclared variable: " ++ [x]
-    Just (val, localEnv) -> Value localEnv val
+    Just (val, localEnv) -> Value val
 
-evalApp :: EState -> EState
-evalApp (Eval env (App (Init f)    param))          = Eval env (App (Eval env f) param)
-evalApp (Eval env (App f@(Eval {}) param))          = Eval env (App (step env f) param)
-evalApp (Eval env (App v@(Value{}) (Init param)))   = Eval env (App v (Eval env param))
-evalApp (Eval env (App v@(Value{}) p@(Eval{})))     = Eval env (App v (step env p))
-evalApp (Eval _   (App (Value env (ValClosure x body))
-                       (Value _ val@arg)))            = Eval env' body
-  where env' = pushEnv x val env
+mergeEnvsFaulty :: Env -> Env -> Env -> Env
+mergeEnvsFaulty commonSuffix env1 env2 =
+    assert (commonSuffix `isSuffixOf` env1) $
+      assert (commonSuffix `isSuffixOf` env2) $
+        prefix1 ++ prefix2 ++ commonSuffix
+  where
+    n = length commonSuffix
+    nenv1 = length env1
+    nenv2 = length env2
+    prefix1 = take (n - nenv1) env1
+    prefix2 = take (n - nenv2) env2
+
+evalApp
+  :: Env    -- Environment
+  -> EState -- Function
+  -> EState -- Parameter
+  -> EState -- Evaluation progress
+evalApp env (Init f)                        param
+  = Eval env (App (Eval env f) param)
+evalApp env f@(Eval {})                     param
+  = Eval env (App (step env f) param)
+evalApp env v@(Value{})                     (Init param)
+  = Eval env (App v (Eval env param))
+evalApp env v@(Value{})                     p@(Eval{})
+  = Eval env (App v (step env p))
+evalApp env (Value (ValClosure fEnv x e))   (Value (ValLit n))
+  = Eval env' e
+  where env' = pushEnv x (ValLit n) fEnv
+evalApp env (Value (ValClosure fEnv x1 e1)) (Value param@(ValClosure paramEnv x2 e2))
+  = Eval env' e1
+  -- FIXME: This discards the inherited env, which might be a problem!!!
+  -- I need a test case that triggers this problem.
+  where env' = pushEnv x1 param fEnv
 
 exp0 = ex "(((/x.((/y.(/x.x)) 0)) 1) 2)"
 exp1 = ex "(((/x.((/y.(/x.(x y))) (/x.x))) 1) (/x.x))"
 
 evalLam :: EState -> EState
-evalLam (Eval env (Lam x body)) = Value env $ ValClosure x body
+evalLam (Eval env (Lam x body)) = Value $ ValClosure env x body
+-- evalLam (Eval env (Lam x body)) = Eval env (Lam x body)
 
 step :: Env -> EState -> EState
 step env v@(Value {}) = v -- error "Value given to step, something went wrong"
 step env (Init x)   = Eval env x
 step _ x@(Eval _ (Lit {})) = evalLit x
 step _ x@(Eval _ (Var {})) = evalVar x
-step _ x@(Eval _ (App {})) = evalApp x
+step _ (Eval env (App f arg)) = evalApp env f arg
 step _ x@(Eval _ (Lam {})) = evalLam x
 
 ex = fromJust . parseExpr
@@ -92,165 +121,105 @@ ex = fromJust . parseExpr
 stepIO :: Env -> EState -> IO EState
 stepIO initEnv es
   = do
-    print es
+    putStrLn $ pp es
     putStrLn "  =="
     return ret
   where
     ret = step initEnv es
 
-reduce :: EState -> IO EState
-reduce es
+reduce :: EState -> EState
+reduce es =
+  case step [] es of
+    Value es' -> Value es'
+    x         -> reduce x
+
+reduceIO :: EState -> IO EState
+reduceIO es
   = do
     es' <- stepIO [] es
     case es' of
-      Value _ _ -> return es'
-      _         -> reduce es'
+      Value _ -> return es'
+      _       -> reduceIO es'
 
+redExIO = unsafePerformIO . reduceIO . ex
+
+redEx = reduce . ex
+
+test :: [Bool]
 test =
-  -- 1
-  [ lookupEnv 'a' testEnv
-    `equals` Just (ValLit 1, [('b', ValLit 0), ('a', ValLit 0)])
-  -- 2
-  , lookupEnv 'b' testEnv
-    `equals` Just (ValLit 0, [('a', ValLit 0)])
-  -- 3
-  , lookupEnv 'a' (pushEnv 'a' (ValLit 2) testEnv)
-    `equals` Just (ValLit 2, testEnv)
+  [ equals "1"
+      (lookupEnv 'a' testEnv)
+      (Just (ValLit 1, [('b', ValLit 0), ('a', ValLit 0)]))
+  , equals "2"
+      (lookupEnv 'b' testEnv)
+      (Just (ValLit 0, [('a', ValLit 0)]))
+  , equals "3"
+      (lookupEnv 'a' (pushEnv 'a' (ValLit 2) testEnv))
+      (Just (ValLit 2, testEnv))
   , step [] (step [] (ex "x"))
-    `shouldThrow` "Undeclared variable: x"
+      `shouldThrow` "Undeclared variable: x"
   -- TODO: Add variable-capture tests...
+  , equals "4"
+      (redEx "(((/x.(/x.x)) 1) 2)") (Value (ValLit 2))
+  , redEx "(((/x.(/x.y)) 1) 2)"
+      `shouldThrow` "Undeclared variable: y"
+  , equals "5" (redEx "(((/x.(/y.x)) 1) 2)") (Value (ValLit 1))
+  , equals "6" (redEx "(((/y.(/x.x)) 1) 2)") (Value (ValLit 2))
+  , redEx "(((/y.(/y.x)) 1) 2)"
+      `shouldThrow` "Undeclared variable: x"
+  , equals "7"
+      (redEx "(((/x.((/x.x) x)) (/x.x)) 2)")
+      (Value (ValLit 2))
+
+  -- Combinations of 3 parameters, all combinations modulo
+  -- alpha equivalence:
+  , "((((/x.(/x.(/x.x))) 0) 1) 2)" `reducesTo` Value (ValLit 2)
+  , "((((/x.(/x.(/y.x))) 0) 1) 2)" `reducesTo` Value (ValLit 1)
+  , "((((/x.(/x.(/y.y))) 0) 1) 2)" `reducesTo` Value (ValLit 2)
+  , "((((/x.(/y.(/x.x))) 0) 1) 2)" `reducesTo` Value (ValLit 2)
+  , "((((/x.(/y.(/x.y))) 0) 1) 2)" `reducesTo` Value (ValLit 1)
+  , "((((/x.(/y.(/y.x))) 0) 1) 2)" `reducesTo` Value (ValLit 0)
+  , "((((/x.(/y.(/y.y))) 0) 1) 2)" `reducesTo` Value (ValLit 2)
+  , "(((/x.((/x.(/x.x)) 0)) 1) 2)" `reducesTo` Value (ValLit 2)
+  , "(((/x.((/x.(/y.x)) 0)) 1) 2)" `reducesTo` Value (ValLit 0)
+  , "(((/x.((/x.(/y.y)) 0)) 1) 2)" `reducesTo` Value (ValLit 2)
+  , "(((/x.((/y.(/x.x)) 0)) 1) 2)" `reducesTo` Value (ValLit 2)
+  , "(((/x.((/y.(/x.y)) 0)) 1) 2)" `reducesTo` Value (ValLit 0)
+  , "(((/x.((/y.(/y.x)) 0)) 1) 2)" `reducesTo` Value (ValLit 1)
+  , "(((/x.((/y.(/y.y)) 0)) 1) 2)" `reducesTo` Value (ValLit 2)
+
+  , "(((/x.(/y.x)) 1) ((/x.(/y.x)) 2))" `reducesTo` Value (ValLit 1)
+  , "(((/x.(/y.(y x))) 1) ((/x.(/y.x)) 2))" `reducesTo` Value (ValLit 2)
+  -- , "(((/x.(/y.x)) 1) ((/x.(/y.x)) 2))" `reducesToIO` Value (ValLit 1)
+  , "(((/x.(/y.(((/y.(/x.(x y))) 3) ((/y.(/x.y)) 4)))) 1) 2)" `reducesToIO` Value (ValLit 3)
+
+  -- , equals "((/z.(((/x.(/y.(y x))) 1) z)) ((/x.(/y.x)) 2))"
+  --    (redEx "((/z.(((/x.(/y.(y x))) 1) z)) ((/x.(/y.x)) 2))") (Value (ValLit 3))
   ]
 
-{-
-eval :: Expr -> State Env Expr
-eval (Lit n) = return (Lit n)
-eval (Var x) = do
-  env <- get
-  case lookupEnv x env of
-    Nothing   -> error $ "Variable not found " ++ show x
-    Just (expr, env') -> -- withState (const env') $ do
-      -- if expr has free variables, and they're not in the environment, then error?
-      -- Evaluate expr using the environment it had when it was
-      -- declared!
-      return $ evalState (eval expr) env'
--- eval (Add e1 e2) = addExpr <$> eval e1 <*> eval e2
-eval (App f param) = do
-  evalf <- eval f
-  evalp <- eval param
-  case evalf of
-    Lam x body -> do
-        env <- get
-        return $ evalState (eval body) (pushEnv x evalp env)
-    _ -> error "Non-function application!"
-eval (Lam x body) = return $ Lam x body
--- eval x = error $ "Eval undefined for " ++ show x
+reducesToIO str = equals str (redExIO str)
+reducesTo str = equals str (redEx str)
 
-evalExpr :: Expr -> Expr
-evalExpr e = evalState (eval e) []
-
-evaluatesTo :: Expr -> Expr -> Bool
-evaluatesTo e1 e2 | evalExpr e1 == e2 = True
-evaluatesTo e1 e2 | otherwise =
-  error $ unlines
-    [ "Expression:"
-    , show e1
-    , "should evaluate to (expected):"
-    , show e2
-    , "but it evaluated to (got):"
-    , show (evalExpr e1)
-    ]
-
-
--- e1 = (\x.\y.y x) y
-captureTest1 = App (Lam 'x' $ Lam 'y' $ App y x) y
-captureTest2 = App (Lam 'x' $ Lam 'y' $ App y x) (Lit 1)
-
-test =
-  -- 1
-  [ lookupEnv 'a' testEnv
-    `equals` Just ((Lit 1), [('b', Lit 0), ('a', Lit 0)])
-  -- 2
-  , lookupEnv 'b' testEnv
-    `equals` Just ((Lit 0), [('a', Lit 0)])
-  -- 3
-  , lookupEnv 'a' (pushEnv 'a' (Lit 2) testEnv)
-    `equals` Just ((Lit 2), testEnv)
-  -- 4
---  , evalExpr incOne
---    `equals` Lit 2
-  -- 5
---  , evalExpr (App addSucc (Lit 5))
---    `equals` Lit 11
-  -- 6
-  , evalExpr (Var 'y')
-    `shouldThrow`
-      "Variable not found 'y'"
-  -- 7
-  , evalExpr (App idFun (Var 'y'))
-    `shouldThrow`
-      "Variable not found 'y'"
-  -- 8
-  , evalExpr (App (Lam 'x' $ Lam 'x' $ x) y)
-    `shouldThrow`
-      "Variable not found 'y'"
-  -- 9
-  , evalExpr captureTest1
-    `shouldThrow`
-      "Variable not found 'y'"
-    -- `equals`
-      -- (Lam 'y' $ App y x)
-  -- 10
-  , evalExpr (App (Lam 'y' $ App x y) (Lit 1))
-    `shouldThrow`
-      "Variable not found 'x'"
-  -- 11
-  , evalExpr (App (Lam 'x' $ x) (Lit 1))
-    `equals` (Lit 1)
-  -- 12 (\x.x 1) id = 1
-  , evalExpr (App (Lam 'x' (App (Var 'x') (Lit 1))) (idFun))
-    `equals` (Lit 1)
-  -- 13 ()
-  ,  captureTest2
-      `evaluatesTo`
-        (Lam 'y' (App (Var 'y') (Var 'x')))
-  -- 14 (\y.(\x.\y.y x) y) 1 -> (\x.\y.y x) 1 -> (\y.y 1)
-  , ((Lam 'y' captureTest1) `App` (Lit 1))
-      `evaluatesTo`
-        (Lam 'y' (App (Var 'y') (Var 'x')))
-  -- ((\y.y 1) id) = 1
-  , evalExpr (((Lam 'y' captureTest1) `App` (Lit 1)) `App` idFun)
-    `equals` (Lit 1)
-  ]
-
-
-testState = do
-  modify (pushEnv 'a' (Lit 1))
-  env <- get
-  when (isNothing (lookupEnv 'a' env)) (error "E1")
-  withState (const []) $ do
-    env <- get
-    when (isJust (lookupEnv 'a' env)) (error "E2")
-  env <- get
-  when (isNothing (lookupEnv 'a' env)) (error "E3")
-
-    -- lookupEnv =
--}
+testO = "((/z.(((/x.(/y.z)) 1) ((/x.(/y.x)) 2))) 3)"
+testJ = "((/x.x) ((/x.(/y.x)) 1))"
+testK = "((/x.(/y.x)) 1)"
 
 main = do
-  putStrLn "Hello Lambda!"
-  -- let s = map show $ zip [1..] test
-  -- putStrLn $ unlines s
+  putStrLn "Hello!"
+  let s = zipWith (curry show) [1..] test
+  putStrLn $ unlines s
 
-equals e1 e2 | e1 == e2 = True
-equals e1 e2 | otherwise =
-  error $ "\nExpecting:\n" ++ show e2 ++ "\nbut got:\n" ++ show e1
+equals _ e1 e2 | e1 == e2 = True
+equals s e1 e2 =
+  error $ "\nExpecting:\n" ++ show e2 ++ "\nbut got:\n" ++ show e1 ++ " when testing " ++ s
 
 shouldThrow :: EState -> String -> Bool
-shouldThrow e errMsg = equals e2 errMsg where
-  e2 :: String
-  e2 = unsafePerformIO $ do
-        eith <- Exception.try (Exception.evaluate e)
-        case eith of
-          Left  (Exception.ErrorCall msg) -> return msg
-          Right _ -> return "No exception"
+shouldThrow e = equals "shouldThrow" e2
+  where
+    e2 :: String
+    e2 = unsafePerformIO $ do
+          eith <- Exception.try (Exception.evaluate e)
+          case eith of
+            Left  (Exception.ErrorCall msg) -> return msg
+            Right _ -> return "No exception"
 
