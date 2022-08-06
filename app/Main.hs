@@ -109,7 +109,7 @@ evalLam (Eval env (Lam x body)) = Value $ ValClosure env x body
 -- evalLam (Eval env (Lam x body)) = Eval env (Lam x body)
 
 step :: Env -> EState -> EState
-step env v@(Value {}) = v -- error "Value given to step, something went wrong"
+step _ v@(Value {}) = error "Value given to step, something went wrong"
 step env (Init x)   = Eval env x
 step _ x@(Eval _ (Lit {})) = evalLit x
 step _ x@(Eval _ (Var {})) = evalVar x
@@ -142,12 +142,37 @@ reduceIO es
       _       -> reduceIO es'
 
 redExIO = unsafePerformIO . reduceIO . ex
-
 redEx = reduce . ex
+
+stepEx n = go n . ex
+  where
+    go 0 e = e
+    go n e = go (n-1) (step [] e)
+
+stepExIO :: String -> Natural -> EState -> IO EState
+stepExIO _ 0 e = return e
+stepExIO str n e
+  = do
+    es' <- stepIO [] e
+    stepExIO str (n-1) es'
 
 test :: [Bool]
 test =
-  [ equals "1"
+  [ inNSteps 8
+      "(((/x.(/y.x)) 1) 2)"
+      (Eval
+        []
+        (App
+          (Value
+            (ValClosure
+              [('x', ValLit 1)]
+              'y'
+              (Var 'x'))
+          )
+          (Init (Lit 2))
+        )
+      )
+  , equals "1"
       (lookupEnv 'a' testEnv)
       (Just (ValLit 1, [('b', ValLit 0), ('a', ValLit 0)]))
   , equals "2"
@@ -170,7 +195,6 @@ test =
   , equals "7"
       (redEx "(((/x.((/x.x) x)) (/x.x)) 2)")
       (Value (ValLit 2))
-
   -- Combinations of 3 parameters, all combinations modulo
   -- alpha equivalence:
   , "((((/x.(/x.(/x.x))) 0) 1) 2)" `reducesTo` Value (ValLit 2)
@@ -195,10 +219,13 @@ test =
 
   -- , equals "((/z.(((/x.(/y.(y x))) 1) z)) ((/x.(/y.x)) 2))"
   --    (redEx "((/z.(((/x.(/y.(y x))) 1) z)) ((/x.(/y.x)) 2))") (Value (ValLit 3))
+
   ]
 
 reducesToIO str = equals str (redExIO str)
 reducesTo str = equals str (redEx str)
+inNSteps n str = equals str (stepEx n str)
+inNStepsIO n str = equals str (unsafePerformIO $ stepExIO str n (ex str))
 
 testO = "((/z.(((/x.(/y.z)) 1) ((/x.(/y.x)) 2))) 3)"
 testJ = "((/x.x) ((/x.(/y.x)) 1))"

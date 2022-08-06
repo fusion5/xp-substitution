@@ -7,12 +7,21 @@ type Env = [(Char, Value)]
 data Value =
       ValLit     Natural
     | ValClosure
-      Env {-
-        Needed because otherwise we'd have:
-          {[] |- {[('x',1)] |- /(y.x)} 2}
+      Env
+      {-
+        Closures need to have a saved environment because otherwise we'd have:
+          {[] |- {[x->1] |- /(y.x)} 2}
             ==
           {[] |- */y.x* 2} -- results in undefined variable x.
-            The environment would then be lost.
+        The environment would then be lost.
+
+        Also, supposing we had no environment,  consider what happens here:
+        {[x->1] |- (<((/y.x))> {[x->2, x->1] |- (/y.x)})}
+          ==
+        {[x->2, x->1] |- (<((/y.x))> <((/y.x))>)}
+
+        This is wrong because the lhs x should have evaluated to 1 but will
+        now evaluate to 2!
       -}
       Char Expr
       deriving (Eq)

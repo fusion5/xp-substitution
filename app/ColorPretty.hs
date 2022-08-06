@@ -41,7 +41,8 @@ ppValue (ValLit n) = return (show n)
 ppValue (ValClosure env x body) = ppSurround '(' $ do
   pe <- ppColor "32" (ppEnv env)
   pb <- ppExpr body
-  return $ showString pe $ showString " |- "
+  return
+    $ showString pe $ showString " |- "
     $ surround '(' (showChar '/' $ showChar x $ showChar '.' pb)
 
 ppExpr :: Expr -> State ColorStack String
