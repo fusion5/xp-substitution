@@ -97,8 +97,8 @@ evalApp env (Value (ValClosure fEnv x e))   (Value (ValLit n))
   where env' = pushEnv x (ValLit n) fEnv
 evalApp env (Value (ValClosure fEnv x1 e1)) (Value param@(ValClosure paramEnv x2 e2))
   = Eval env' e1
-  -- FIXME: This discards the inherited env, which might be a problem!!!
-  -- I need a test case that triggers this problem.
+  -- This discards env, but this shouldn't be a problem because
+  -- env is a suffix of both fEnv and paramEnv (I think!).
   where env' = pushEnv x1 param fEnv
 
 exp0 = ex "(((/x.((/y.(/x.x)) 0)) 1) 2)"
@@ -191,7 +191,7 @@ test =
   , "(((/x.(/y.x)) 1) ((/x.(/y.x)) 2))" `reducesTo` Value (ValLit 1)
   , "(((/x.(/y.(y x))) 1) ((/x.(/y.x)) 2))" `reducesTo` Value (ValLit 2)
   -- , "(((/x.(/y.x)) 1) ((/x.(/y.x)) 2))" `reducesToIO` Value (ValLit 1)
-  , "(((/x.(/y.(((/y.(/x.(x y))) 3) ((/y.(/x.y)) 4)))) 1) 2)" `reducesToIO` Value (ValLit 3)
+  , "(((/x.(/y.(((/y.(/x.(x y))) 3) ((/y.(/x.y)) 4)))) 1) 2)" `reducesTo` Value (ValLit 4)
 
   -- , equals "((/z.(((/x.(/y.(y x))) 1) z)) ((/x.(/y.x)) 2))"
   --    (redEx "((/z.(((/x.(/y.(y x))) 1) z)) ((/x.(/y.x)) 2))") (Value (ValLit 3))
